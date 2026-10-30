@@ -566,6 +566,8 @@ impl TagStream {
         }
         self.line = self.line.saturating_add(1);
         let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+        // A UTF-8 byte order mark before the first group code, as `parse` skips it.
+        let raw = if self.line == 1 { raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(raw) } else { raw };
         match self.pending.take() {
             None => {
                 let code_line = String::from_utf8_lossy(raw);
@@ -1168,6 +1170,15 @@ mod tests {
             // as `parse` reads it.
             let utf8 = String::from_utf8(bytes.iter().map(|&b| if b == 0xe9 { b'e' } else { b }).collect()).unwrap().replace("Cafe", "Café 😀");
             assert_eq!(stream_in_chunks(utf8.as_bytes(), &[5]).unwrap(), parse(utf8.as_bytes()).unwrap());
+        }
+    }
+
+    #[test]
+    fn streamed_ascii_skips_a_leading_utf8_bom_like_the_batch_parse() {
+        let text = b"\xEF\xBB\xBF  0\nSECTION\n  2\nENTITIES\n  0\nENDSEC\n  0\nEOF\n";
+        let expected = parse(text).unwrap();
+        for sizes in [&[text.len()][..], &[1], &[2], &[5]] {
+            assert_eq!(stream_in_chunks(text, sizes).unwrap(), expected, "chunks {sizes:?}");
         }
     }
 
