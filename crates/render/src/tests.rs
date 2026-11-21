@@ -1580,6 +1580,81 @@ fn mtext_background_mask_resolves_bylayer_byblock_and_nonfinite_rotation() {
     assert!(max_x - min_x > 8.0, "overflowing word background quad width ({}) must cover actual glyph strokes", max_x - min_x);
 }
 
+/// The background mask's triangle corners, and whether `p` lies in one of its triangles.
+fn mask_tris(list: &DisplayList) -> Vec<cadcraft_geom::Vec2> {
+    let p = list.prims.iter().find(|p| p.kind == Kind::Mask).expect("background mask");
+    list.tris[p.start as usize..(p.start + p.len) as usize].to_vec()
+}
+
+fn masked(tris: &[cadcraft_geom::Vec2], p: cadcraft_geom::Vec2) -> bool {
+    tris.chunks(3).any(|t| {
+        let side = |a: cadcraft_geom::Vec2, b: cadcraft_geom::Vec2| (b - a).cross(p - a);
+        let s = [side(t[0], t[1]), side(t[1], t[2]), side(t[2], t[0])];
+        s.iter().all(|v| *v >= 0.0) || s.iter().all(|v| *v <= 0.0)
+    })
+}
+
+fn masked_mtext(contents: &str, width: f64, rotation: f64, columns: Option<cadcraft_doc::MTextColumns>) -> cadcraft_doc::MText {
+    cadcraft_doc::MText {
+        insert: Vec3::new(3.0, 4.0, 0.0),
+        height: 1.0,
+        width,
+        attach: 1,
+        rotation,
+        style: "Standard".into(),
+        contents: contents.into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns,
+        background: Some(cadcraft_doc::MTextBackground { mask: 3, color: None, scale: 1.5 }),
+    }
+}
+
+#[test]
+fn mtext_background_mask_leaves_the_gutter_between_columns_bare() {
+    let columns = cadcraft_doc::MTextColumns { count: 2, gutter: 4.0, height: 6.0, ..Default::default() };
+    for rotation in [0.0, 0.6] {
+        let t = masked_mtext(&"word ".repeat(12), 10.0, rotation, Some(columns.clone()));
+        let mut d = Drawing::new_metric();
+        d.add(&Space::Model, Common::default(), EntityKind::MText(t.clone())).unwrap();
+        let tris = mask_tris(&build(&d, &Space::Model, &Options::default()));
+        let at = t.insert.xy();
+        let world = |x: f64, y: f64| at + cadcraft_geom::Vec2::new(x, y).rotate(rotation);
+        // Columns 0..10 and 14..24, from the insertion point down to -6.
+        assert!(masked(&tris, world(5.0, -3.0)) && masked(&tris, world(19.0, -1.0)), "{rotation}: each column is masked");
+        assert!(!masked(&tris, world(12.0, -3.0)), "{rotation}: the gutter is not");
+        let l = layout_mtext_entity(&d, &t);
+        assert!(l.strokes.iter().flatten().all(|p| masked(&tris, *p)), "{rotation}: every stroke is behind the mask");
+    }
+}
+
+#[test]
+fn mtext_background_mask_of_one_column_is_one_quad_as_before() {
+    // The quad the mask had before columns got their own: the layout's box, grown by the text
+    // drawn past it and by the border offset, turned by the rotation about the insertion point.
+    let one_quad = |d: &Drawing, t: &cadcraft_doc::MText| {
+        let u = layout_mtext_entity(d, &cadcraft_doc::MText { rotation: 0.0, ..t.clone() });
+        let mut bounds = u.bounds;
+        u.strokes.iter().flatten().for_each(|q| bounds.add(*q));
+        let gap = 0.5 * t.height;
+        let (lo, hi) = (bounds.min - cadcraft_geom::Vec2::new(gap, gap), bounds.max + cadcraft_geom::Vec2::new(gap, gap));
+        let (at, x) = (t.insert.xy(), cadcraft_geom::Vec2::from_angle(t.rotation));
+        let turn = |p: cadcraft_geom::Vec2| at + x * (p.x - at.x) + x.perp() * (p.y - at.y);
+        let [p0, p1, p2, p3] = [lo, cadcraft_geom::Vec2::new(hi.x, lo.y), hi, cadcraft_geom::Vec2::new(lo.x, hi.y)].map(turn);
+        vec![p0, p1, p2, p0, p2, p3]
+    };
+    let one_column = cadcraft_doc::MTextColumns { count: 1, gutter: 4.0, height: 3.0, ..Default::default() };
+    for t in [
+        masked_mtext("Typography, quickly jumping", 0.0, 0.0, None),
+        masked_mtext("Typography wraps, quickly jumping\\Pover lazy dogs", 6.0, 0.4, None),
+        masked_mtext(&"jumpy word ".repeat(9), 8.0, -0.3, Some(one_column.clone())),
+    ] {
+        let mut d = Drawing::new_metric();
+        d.add(&Space::Model, Common::default(), EntityKind::MText(t.clone())).unwrap();
+        assert_eq!(mask_tris(&build(&d, &Space::Model, &Options::default())), one_quad(&d, &t), "{}", t.contents);
+    }
+}
+
 // ---------- point budget (#1922) ----------
 
 fn circle() -> EntityKind {

@@ -76,7 +76,8 @@ pub(crate) fn mtext(b: &mut Builder, ctx: &Ctx, layer: &str, t: &cadcraft_doc::M
     if b.opts.fill
         && let Some(bg) = &t.background
         && (bg.mask & 0x03) != 0
-        && let Some([p0, p1, p2, p3]) = mtext_bg_quad(ctx.d, t, &l, bg.scale)
+        && let tris = mtext_bg_tris(ctx.d, t, &l, bg.scale)
+        && !tris.is_empty()
     {
         let n = b.list.prims.len();
         let use_mask = (bg.mask & 2) != 0 || bg.color.is_none();
@@ -84,7 +85,7 @@ pub(crate) fn mtext(b: &mut Builder, ctx: &Ctx, layer: &str, t: &cadcraft_doc::M
             Some(c) if !use_mask => ink(c, layer_color, ctx.block_color),
             _ => Ink { rgb: Rgb(255, 255, 255), aci7: false, aci: 0 },
         };
-        b.tris(ctx, fill_ink, &[p0, p1, p2, p0, p2, p3]);
+        b.tris(ctx, fill_ink, &tris);
         if use_mask && let Some(p) = b.list.prims.get_mut(n) {
             p.kind = super::Kind::Mask;
         }
@@ -94,7 +95,9 @@ pub(crate) fn mtext(b: &mut Builder, ctx: &Ctx, layer: &str, t: &cadcraft_doc::M
     }
 }
 
-fn mtext_bg_quad(d: &Drawing, t: &cadcraft_doc::MText, l: &cadcraft_fonts::MTextLayout, scale: f64) -> Option<[cadcraft_geom::Vec2; 4]> {
+/// The background's triangles: two per column, each column's box grown by its own text and the
+/// border offset, so the gutters between columns stay unmasked.
+fn mtext_bg_tris(d: &Drawing, t: &cadcraft_doc::MText, l: &cadcraft_fonts::MTextLayout, scale: f64) -> Vec<cadcraft_geom::Vec2> {
     let rot = if t.rotation.is_finite() { t.rotation } else { 0.0 };
     let u_owned;
     let u = if rot == 0.0 {
@@ -103,21 +106,44 @@ fn mtext_bg_quad(d: &Drawing, t: &cadcraft_doc::MText, l: &cadcraft_fonts::MText
         u_owned = layout_mtext_entity(d, &cadcraft_doc::MText { rotation: 0.0, background: None, ..t.clone() });
         &u_owned
     };
-    let mut bounds = u.bounds;
-    for q in u.strokes.iter().flatten() {
-        if q.is_finite() {
-            bounds.add(*q);
+    let mut boxes = u.column_bounds.clone();
+    // Each point grows the column nearest to it across: the last one starting at or left of it,
+    // or the next one when that is closer.
+    let mut starts: Vec<(f64, usize)> = boxes.iter().map(|c| c.min.x).zip(0..).collect();
+    starts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for q in u.strokes.iter().flatten().filter(|q| q.is_finite()) {
+        let k = starts.partition_point(|(x, _)| *x <= q.x);
+        let next = starts.get(k).map(|&(x, i)| (x - q.x, i));
+        let prev = k.checked_sub(1).and_then(|k| starts.get(k)).map(|&(_, i)| (boxes.get(i).map_or(0.0, |c| q.x - c.max.x), i));
+        let nearest = match (prev, next) {
+            (Some((past, i)), Some((short, j))) => {
+                if short < past {
+                    j
+                } else {
+                    i
+                }
+            }
+            (Some((_, i)), None) | (None, Some((_, i))) => i,
+            (None, None) => continue,
+        };
+        if let Some(c) = boxes.get_mut(nearest) {
+            c.add(*q);
         }
     }
-    if !(bounds.width().is_finite() && bounds.height().is_finite()) || bounds.width() <= 0.0 || bounds.height() <= 0.0 {
-        return None;
-    }
     let gap = (scale - 1.0).clamp(0.0, 4.0) * t.height.max(0.0);
-    let (lo, hi) = (bounds.min - cadcraft_geom::Vec2::new(gap, gap), bounds.max + cadcraft_geom::Vec2::new(gap, gap));
     let at = t.insert.xy();
     let (x, y) = (cadcraft_geom::Vec2::from_angle(rot), cadcraft_geom::Vec2::from_angle(rot).perp());
     let turn = |p: cadcraft_geom::Vec2| at + x * (p.x - at.x) + y * (p.y - at.y);
-    Some([turn(lo), turn(cadcraft_geom::Vec2::new(hi.x, lo.y)), turn(hi), turn(cadcraft_geom::Vec2::new(lo.x, hi.y))])
+    let mut tris = Vec::with_capacity(boxes.len() * 6);
+    for bounds in boxes {
+        if !(bounds.width().is_finite() && bounds.height().is_finite()) || bounds.width() <= 0.0 || bounds.height() <= 0.0 {
+            continue;
+        }
+        let (lo, hi) = (bounds.min - cadcraft_geom::Vec2::new(gap, gap), bounds.max + cadcraft_geom::Vec2::new(gap, gap));
+        let [p0, p1, p2, p3] = [lo, cadcraft_geom::Vec2::new(hi.x, lo.y), hi, cadcraft_geom::Vec2::new(lo.x, hi.y)].map(turn);
+        tris.extend([p0, p1, p2, p0, p2, p3]);
+    }
+    tris
 }
 
 /// A TEXT's justification as the fonts' alignment (used where text is placed outside a build).
