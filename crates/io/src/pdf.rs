@@ -36,6 +36,7 @@ use kr::text::{GlyphId, KrillaGlyph};
 use crate::{IoError, Result};
 
 mod fonts;
+mod outline;
 
 /// PDF points per millimetre.
 const PT_PER_MM: f64 = 72.0 / 25.4;
@@ -866,7 +867,7 @@ fn krilla_failure(e: KrillaError) -> Failure {
 /// transparent primitive is stroked on its own (one path is painted once), so where
 /// primitives overlap they build up, as in PNG plots and on screen. Block contents and
 /// viewport contents share their reference's handle, so this goes by primitive, not by object.
-/// Each filled primitive is one path of its triangles.
+/// Each filled primitive is one path: the outline of its triangles.
 ///
 /// Primitives that stand for a glyph in an embeddable font (see [`fonts::Fonts`]) are written
 /// as text instead: the glyph at font size 1 under its glyph matrix (the matrix axes are one
@@ -982,14 +983,16 @@ fn stroke_run(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)
     }
 }
 
-/// Fill a set of triangles, clipped to the plot area.
+/// Fill a set of triangles, clipped to the plot area, as the loops of their outline (see
+/// [`outline`]), which fill the same as the triangles with far less path data.
 fn fill_tris(s: &mut Surface<'_>, p: &SheetPage, raw: &[Vec2], rgb: Rgb, t: u8) {
     let mapped: Vec<Vec2> = raw.iter().map(|q| p.map.pt(*q)).collect();
     // With a vertex out of range, keep the parts inside the plot area.
     let tris = if mapped.iter().all(|q| coord(*q).is_some()) { mapped } else { clip::clip_triangles(&mapped, &p.clip_pt) };
+    let tris: Vec<[outline::Pt; 3]> = tris.as_chunks::<3>().0.iter().filter_map(|[a, b, c]| Some([coord(*a)?, coord(*b)?, coord(*c)?])).collect();
+    let rings = outline::loops(&tris).unwrap_or_else(|| tris.iter().map(|t| t.to_vec()).collect());
     let mut pb = PathBuilder::new();
-    for tri in tris.as_chunks::<3>().0 {
-        let Some(v) = tri.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { continue };
+    for v in &rings {
         for (j, (x, y)) in v.iter().enumerate() {
             if j == 0 {
                 pb.move_to(*x, *y);
