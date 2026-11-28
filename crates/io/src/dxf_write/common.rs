@@ -146,13 +146,14 @@ pub(super) fn layer_and_props(w: &mut W, c: &Common, base: Option<&Common>) {
 }
 
 /// The properties attribute `a` of block reference `e` is drawn with: its own, else its
-/// definition's, from the block's definitions by tag `defs`; an attribute defined on layer 0 is on
-/// the reference's layer. Also the definition's properties.
+/// definition's, from the block's definitions by tag `defs`; an attribute that takes layer 0 from
+/// its definition is on the reference's layer, one set on layer 0 itself stays there. Also the
+/// definition's properties.
 pub(super) fn attrib_common(e: &Entity, defs: &std::collections::BTreeMap<cadcraft_doc::TagKey<'_>, &Entity>, a: &Attrib) -> (Common, Common) {
     let def = defs.get(&cadcraft_doc::TagKey(&a.tag));
     let base = def.map(|de| de.common.clone()).unwrap_or_default();
     let mut c = a.props.over(&base);
-    if c.layer == "0" {
+    if a.props.layer.is_none() && c.layer == "0" {
         c.layer.clone_from(&e.common.layer);
     }
     (c, base)

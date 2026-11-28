@@ -41,13 +41,13 @@ fn burst_pieces(d: &Drawing, e: &Entity) -> Option<Vec<Entity>> {
 }
 
 /// The properties an attribute is drawn with: its own, else those of its definition `def`; layer
-/// 0 is the reference's layer and ByBlock colour the reference's colour, as EXPLODE gives the
-/// block's objects.
+/// 0 from the definition is the reference's layer (an attribute set on layer 0 itself stays there)
+/// and ByBlock colour the reference's colour, as EXPLODE gives the block's objects.
 fn attrib_common(e: &Entity, def: Option<&Entity>, props: &cadcraft_doc::AttribProps) -> Common {
     // An attribute without a definition follows the reference.
     let base = def.map(|de| de.common.clone()).unwrap_or_else(|| Common { color: Color::ByBlock, ..Common::default() });
     let mut c = props.over(&base);
-    if c.layer == "0" {
+    if props.layer.is_none() && c.layer == "0" {
         c.layer.clone_from(&e.common.layer);
     }
     if c.color == Color::ByBlock {

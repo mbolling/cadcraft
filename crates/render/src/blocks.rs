@@ -209,13 +209,19 @@ fn attributes(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert
             let sh = if multiline.is_none() { Some(place_text_entity(ctx.d, &a.text, &a.text.value).0) } else { None };
             // Properties of the attribute's definition (as AutoCAD copies them to the attribute
             // on insertion), except those set on the attribute itself: ByBlock = the reference's,
-            // layer 0 = the reference's layer.
+            // layer 0 from the definition = the reference's layer.
             let def = defs.get(&a.tag.to_ascii_lowercase()).copied();
             let (ink, lw, shown, t) = match (def, a.props.is_empty()) {
                 (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference),
                 (def, _) => {
                     let c = a.props.over(&def.map(|d| d.common.clone()).unwrap_or_else(by_block));
-                    let (ink, lw, _, _, shown, layer_t, fade) = resolve_common(&sub_ctx(ctx, e, Mat3::IDENTITY), &c, b.plotting);
+                    let mut sub = sub_ctx(ctx, e, Mat3::IDENTITY);
+                    // An attribute set on layer 0 itself is on layer 0 where its reference is,
+                    // not on the reference's layer.
+                    if a.props.layer.is_some() {
+                        sub.block_layer.clone_from(&ctx.block_layer);
+                    }
+                    let (ink, lw, _, _, shown, layer_t, fade) = resolve_common(&sub, &c, b.plotting);
                     // ByBlock takes the reference's own transparency, not its locked-layer fade.
                     let t = if b.opts.transparency { transparency(c.transparency, layer_t, own) } else { 0 };
                     let t = if b.opts.on_screen { t.max(fade) } else { t };

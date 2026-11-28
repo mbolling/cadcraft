@@ -167,3 +167,40 @@ fn hostile_attrib_groups_do_not_panic() {
     assert_eq!((p.layer.as_deref(), p.linetype.as_deref()), (None, None), "empty names are not properties");
     let _ = write_dxf(&d);
 }
+
+/// The layer and colour of each attribute of each block reference in `d`, in file order.
+fn layers_and_colors(d: &Drawing) -> Vec<(Option<String>, Option<Color>)> {
+    let attribs = d.model.iter().filter_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.attribs.clone()) } else { None });
+    attribs.flatten().map(|a| (a.props.layer, a.props.color)).collect()
+}
+
+/// #3492: an ATTRIB on layer 0 of a reference on layer A stays on layer 0 when the drawing is read
+/// and saved again, as DXF and as DWG; layer 0 means the reference's layer only for a definition.
+#[test]
+fn attribute_on_layer_zero_stays_on_layer_zero() {
+    cadcraft_io::dwg_worker::allow_in_process();
+    let attrib = |layer: &str, color: &str| format!("0\nATTRIB\n8\n{layer}\n{color}10\n0\n20\n1\n30\n0\n40\n1\n1\nv\n2\nT1\n70\n0\n");
+    let insert = |x: u32, attrib: String| format!("0\nINSERT\n8\nA\n66\n1\n2\nBLK\n10\n{x}\n20\n0\n30\n0\n{attrib}0\nSEQEND\n8\nA\n");
+    let dxf = format!(
+        "0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n70\n2\n0\nLAYER\n2\nA\n70\n0\n62\n3\n6\nCONTINUOUS\n\
+0\nLAYER\n2\nB\n70\n0\n62\n5\n6\nCONTINUOUS\n0\nENDTAB\n0\nENDSEC\n\
+0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n8\n0\n2\nBLK\n70\n2\n10\n0\n20\n0\n30\n0\n3\nBLK\n\
+0\nLINE\n8\n0\n10\n0\n20\n0\n30\n0\n11\n5\n21\n0\n31\n0\n\
+0\nATTDEF\n8\n0\n10\n0\n20\n1\n30\n0\n40\n1\n1\nx\n3\n\n2\nT1\n70\n0\n0\nENDBLK\n8\n0\n0\nENDSEC\n\
+0\nSECTION\n2\nENTITIES\n{}{}{}0\nENDSEC\n0\nEOF\n",
+        insert(0, attrib("0", "")),
+        insert(10, attrib("B", "")),
+        insert(20, attrib("0", "62\n1\n")),
+    );
+    let d = cadcraft_io::read(dxf.as_bytes(), "t.dxf").expect("read");
+    let read = layers_and_colors(&d);
+    assert_eq!(read.len(), 3);
+    let layers: Vec<Option<&str>> = read.iter().map(|(l, _)| l.as_deref()).collect();
+    assert_eq!(layers, [Some("0"), Some("B"), Some("0")], "as the file says");
+    assert_eq!(read[2].1, Some(Color::Index(1)));
+    for name in ["t.dxf", "t.dwg"] {
+        let saved = cadcraft_io::write(&d, name).expect("write");
+        let back = cadcraft_io::read(&saved, name).expect("reopen");
+        assert_eq!(layers_and_colors(&back), read, "{name}: attribute layers or colours changed");
+    }
+}

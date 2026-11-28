@@ -1021,6 +1021,32 @@ fn attributes_follow_the_reference_layer_and_have_no_definition() {
 }
 
 #[test]
+fn attribute_set_on_layer_zero_does_not_take_the_reference_layer() {
+    // #3492: a layer-0 definition in a reference on a 40 % layer. An attribute that takes layer 0
+    // from its definition is drawn on the reference's layer, like the line; one set on layer 0
+    // itself is drawn on the opaque layer 0.
+    let drawn = |layer: Option<&str>| {
+        let mut d = Drawing::new_imperial();
+        let mut blk = cadcraft_doc::Block::new("B");
+        let (c, k) = line_common(Common::default());
+        blk.entities.push(block_entity(1, c, k));
+        blk.entities.push(block_entity(2, Common::default(), EntityKind::AttDef(attrib("TAG"))));
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let EntityKind::Insert(mut ins) = insert_of("B") else { panic!("an insert") };
+        let props = cadcraft_doc::AttribProps { layer: layer.map(Into::into), ..Default::default() };
+        ins.attribs.push(cadcraft_doc::Attrib { props, ..attrib("TAG") });
+        d.add(&Space::Model, Common { layer: "Glass".into(), ..Default::default() }, EntityKind::Insert(ins)).unwrap();
+        d.layer_mut("Glass").unwrap().transparency = 40;
+        line_and_text(&d)
+    };
+    let (inherited_line, inherited) = drawn(None);
+    let (line, own) = drawn(Some("0"));
+    assert_eq!(line, inherited_line, "the block's contents still take the reference's layer");
+    assert!(inherited.iter().all(|t| *t == line), "{inherited:?}");
+    assert!(own.iter().all(|t| *t < line), "{own:?}");
+}
+
+#[test]
 fn mtext_exact_spacing_ignores_taller_lines() {
     // #711: a doubled middle line pushes the next baseline down with At least, not with Exactly.
     let mtext = |contents: &str, line_spacing: f64, line_spacing_exact: bool| cadcraft_doc::MText {

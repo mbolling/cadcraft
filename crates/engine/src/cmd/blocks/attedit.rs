@@ -220,7 +220,7 @@ fn modify_attrib(s: &mut Session, (h, k): (Handle, usize), f: impl FnOnce(&mut c
 }
 
 /// The layer and colour attribute `k` of block reference `h` is drawn with: its own, else its
-/// definition's (layer 0 is the reference's layer).
+/// definition's (layer 0 from the definition is the reference's layer).
 fn current_props(s: &Session, (h, k): (Handle, usize)) -> Option<(String, Color)> {
     let d = s.doc().ok()?;
     let e = d.entity(h)?;
@@ -230,7 +230,7 @@ fn current_props(s: &Session, (h, k): (Handle, usize)) -> Option<(String, Color)
         .block(&ins.block)
         .and_then(|b| b.entities.iter().find(|be| matches!(&be.kind, EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(&a.tag))));
     let c = a.props.over(&def.map(|de| de.common.clone()).unwrap_or_else(Common::default));
-    let layer = if c.layer == "0" { e.common.layer.clone() } else { c.layer };
+    let layer = if a.props.layer.is_none() && c.layer == "0" { e.common.layer.clone() } else { c.layer };
     Some((layer, c.color))
 }
 
