@@ -115,7 +115,13 @@ fn drawn(d: &Drawing, h: Handle) -> Vec<Entity> {
     let defs = b.attdefs_by_tag();
     out.extend(ins.attribs.iter().filter(|a| !a.invisible).map(|a| {
         let def = defs.get(&TagKey(&a.tag)).map(|e| &e.common);
-        let common = under(&a.props.over(def.unwrap_or(&by_block)), r);
+        let own = a.props.over(def.unwrap_or(&by_block));
+        let mut common = under(&own, r);
+        // An attribute set on layer 0 itself stays there; only layer 0 from its definition is
+        // the reference's layer.
+        if a.props.layer.is_some() {
+            common.layer.clone_from(&own.layer);
+        }
         let kind = match a.multiline_text() {
             Some(m) => EntityKind::MText(m),
             None => EntityKind::Text(a.text.clone()),
