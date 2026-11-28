@@ -625,6 +625,8 @@ struct ObjectWritePlan<'a> {
     table_style_dict: &'a String,
     pstyle_dict: &'a String,
     scale_dict: &'a String,
+    /// The WIPEOUTVARIABLES object's handle and the WIPEOUTFRAME it holds, when the drawing sets one.
+    wipeout_vars: Option<(&'a String, i64)>,
     model_layout: &'a String,
     ms_br: &'a String,
     ps_brs: &'a [(String, String, &'a Layout)],
@@ -715,6 +717,7 @@ fn write_root_group_objects(
     let pstyle_dict = plan.pstyle_dict;
     let scale_dict = plan.scale_dict;
     let xrecords = plan.xrecords;
+    let wipeout_vars = plan.wipeout_vars;
     w.s(0, "SECTION");
     w.s(2, "OBJECTS");
     w.s(0, "DICTIONARY");
@@ -746,6 +749,10 @@ fn write_root_group_objects(
     }
     w.s(3, "ACAD_SCALELIST");
     w.s(350, scale_dict.clone());
+    if let Some((h, _)) = wipeout_vars {
+        w.s(3, "ACAD_WIPEOUT_VARS");
+        w.s(350, h.clone());
+    }
     w.s(0, "DICTIONARY");
     w.s(5, group_dict);
     w.s(330, root_dict.clone());
@@ -839,6 +846,15 @@ fn write_named_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
         }
     }
     scale_list(w, scales, scale_dict, root_dict);
+    // WIPEOUTFRAME: 0 frames hidden, 1 shown, 2 shown but not plotted (#3440).
+    if let Some((h, frame)) = plan.wipeout_vars {
+        w.s(0, "WIPEOUTVARIABLES");
+        w.s(5, h.clone());
+        w.group("ACAD_REACTORS", 330, &[root_dict]);
+        w.s(330, root_dict.clone());
+        w.s(100, "AcDbWipeoutVariables");
+        w.i(70, frame);
+    }
 }
 
 fn write_associative_objects(w: &mut W, cx: &Ctx) {
@@ -1172,6 +1188,9 @@ pub(super) fn tags_kept_for(
     }
     // The annotation scale list: the ACAD_SCALELIST dictionary of SCALE objects.
     let scale_dict = w.h();
+    // Only a drawing that holds WIPEOUTFRAME (set, or read from a file) gets the object.
+    let wipeout_frame = d.header.get("WIPEOUTFRAME").and_then(HVal::as_i64).filter(|v| (0..=2).contains(v));
+    let wipeout_handle = wipeout_frame.map(|_| w.h());
     let scales: Vec<(&cadcraft_doc::AnnoScale, String)> = d.scales.iter().filter(|s| s.is_valid()).map(|s| (s, w.h())).collect();
     // Plot style names used by layers and objects (Normal always), each a placeholder object; in
     // a drawing of named plot styles also those of the layers of saved layer states, which name
@@ -1325,6 +1344,7 @@ pub(super) fn tags_kept_for(
             table_style_dict: &table_style_dict,
             pstyle_dict: &pstyle_dict,
             scale_dict: &scale_dict,
+            wipeout_vars: wipeout_handle.as_ref().zip(wipeout_frame),
             model_layout: &model_layout,
             ms_br: &ms_br,
             ps_brs: &ps_brs,

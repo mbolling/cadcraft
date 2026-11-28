@@ -19,3 +19,31 @@ fn wipeoutvariables_sets_the_frame_flag() {
     assert_eq!(frame(None), 1, "no object: the default shows frames");
     assert_eq!(frame(Some(7)), 1, "an out-of-range flag is ignored");
 }
+
+/// A drawing with `frame` set (or untouched for `None`), saved as `name` and read back.
+fn saved(frame: Option<i64>, name: &str) -> cadcraft_doc::Drawing {
+    cadcraft_io::dwg_worker::allow_in_process();
+    let mut d = cadcraft_doc::Drawing::new_metric();
+    if let Some(f) = frame {
+        d.header.set_i64("WIPEOUTFRAME", f);
+    }
+    let bytes = cadcraft_io::write(&d, name).unwrap();
+    cadcraft_io::read(&bytes, name).unwrap()
+}
+
+#[test]
+fn wipeout_frame_setting_survives_a_save_in_dxf_and_dwg() {
+    // The DWG bridge is unavailable on wasm and FreeBSD ARM64 (#2526); DXF still works.
+    let mut names = vec!["a.dxf"];
+    if cfg!(not(any(target_arch = "wasm32", all(target_os = "freebsd", target_arch = "aarch64")))) {
+        names.push("a.dwg");
+    }
+    for name in names {
+        for frame in [0, 1, 2] {
+            let back = saved(Some(frame), name);
+            assert_eq!(back.header.i64("WIPEOUTFRAME", 1), frame, "{name}: frame {frame}");
+        }
+        let untouched = saved(None, name);
+        assert_eq!(untouched.header.i64("WIPEOUTFRAME", 1), 1, "{name}: default");
+    }
+}
