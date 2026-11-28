@@ -347,7 +347,7 @@ fn write_header(w: &mut W, d: &Drawing, version: Version) -> usize {
     seed_pos
 }
 
-fn write_classes(w: &mut W, cx: &Ctx, every: &[&Entity]) {
+fn write_classes(w: &mut W, cx: &Ctx, every: &[&Entity], wipeout_vars: bool) {
     w.s(0, "SECTION");
     w.s(2, "CLASSES");
     let mut classes = vec![
@@ -370,6 +370,9 @@ fn write_classes(w: &mut W, cx: &Ctx, every: &[&Entity]) {
     }
     if every.iter().any(|e| matches!(e.kind, EntityKind::Wipeout(_))) {
         classes.push(("WIPEOUT", "AcDbWipeout", 127, true));
+    }
+    if wipeout_vars {
+        classes.push(("WIPEOUTVARIABLES", "AcDbWipeoutVariables", 0, false));
     }
     if !cx.images.is_empty() {
         classes.push(("IMAGE", "AcDbRasterImage", 127, true));
@@ -1215,7 +1218,7 @@ pub(super) fn tags_kept_for(
 
     let seed_pos = write_header(&mut w, d, version);
 
-    write_classes(&mut w, &cx, &every);
+    write_classes(&mut w, &cx, &every, wipeout_frame.is_some());
 
     let max_dashes = bridge.then_some(super::DWG_MAX_LINETYPE_ELEMENTS);
     let (ltype_handles, linetypes_cut) = write_tables(&mut w, TableWritePlan { d, version, cx: &mut cx, ext: d.extents(&Space::Model), max_dashes });
