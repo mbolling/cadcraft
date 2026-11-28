@@ -68,7 +68,8 @@ impl ChunkIx {
                 if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
                     infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
                 }
-                entity_bounds_cached(d, e, 0, &mut cache)
+                let b = entity_bounds_cached(d, e, 0, &mut cache);
+                crate::select::pick_bounds(d, e, b)
             })
             .collect::<Vec<_>>();
         let envelope = bounds.iter().filter_map(rect).reduce(|a, b| a.merged(&b));
@@ -176,8 +177,8 @@ impl SpatialIndex {
         let infinite = chunks.iter().flat_map(|(off, c)| c.infinite.iter().map(move |i| off + i)).collect();
         SpatialIndex {
             store: store.clone(),
-            blocks: d.blocks.clone(),
-            dim_styles: d.dim_styles.clone(),
+            blocks: (*d.blocks).clone(),
+            dim_styles: d.dim_styles.to_vec(),
             dimscale: d.header.f64("DIMSCALE", 1.0),
             anno: anno_key(d),
             hidden_layers: hidden_layers(d).map(str::to_owned).collect(),
@@ -193,7 +194,7 @@ impl SpatialIndex {
         self.blocks.len() == d.blocks.len()
             && self.blocks.iter().zip(&d.blocks).all(|((ka, a), (kb, b))| ka == kb && Arc::ptr_eq(a, b))
             && self.dimscale.to_bits() == d.header.f64("DIMSCALE", 1.0).to_bits()
-            && self.dim_styles == d.dim_styles
+            && self.dim_styles == *d.dim_styles
             && self.anno == anno_key(d)
             && self.hidden_layers.iter().map(String::as_str).eq(hidden_layers(d))
     }
